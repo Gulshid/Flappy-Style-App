@@ -1,14 +1,20 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
+import '../game/game_assets.dart';
 import '../game/game_controller.dart';
 import '../game/game_painter.dart';
 import '../models/game_state.dart';
+import '../utils/audio.dart';
 import '../utils/constants.dart';
 import '../utils/storage.dart';
 import '../widgets/game_over_panel.dart';
 import '../widgets/game_text.dart';
+import '../widgets/mute_button.dart';
 import '../widgets/score_display.dart';
 
 class GameScreen extends StatefulWidget {
@@ -20,9 +26,13 @@ class GameScreen extends StatefulWidget {
 
 class _GameScreenState extends State<GameScreen>
     with SingleTickerProviderStateMixin {
-  // The controller saves a new best score through Storage, but never
-  // touches shared_preferences itself (keeps the logic easy to test).
-  final GameController controller = GameController(onNewBest: Storage.saveBest);
+  // The controller only ANNOUNCES things (new best, flap, crash...). This
+  // screen decides what to do about them, so the game logic stays free of
+  // storage / audio code and is easy to test.
+  late final GameController controller = GameController(
+    onNewBest: Storage.saveBest,
+    onEvent: _handleEvent,
+  );
 
   late final Ticker _ticker;
   late final GamePainter _painter;
@@ -31,7 +41,8 @@ class _GameScreenState extends State<GameScreen>
   @override
   void initState() {
     super.initState();
-    _painter = GamePainter(controller);
+    // Images were preloaded in main(), so there is no loading flicker
+    _painter = GamePainter(controller, GameAssets.instance);
 
     // Load the saved high score at startup
     Storage.loadBest().then((best) {
@@ -53,6 +64,25 @@ class _GameScreenState extends State<GameScreen>
     controller.dispose();
     super.dispose();
   }
+
+  // ------------------------------------------------------ Sound + haptics
+
+  void _handleEvent(GameEvent event) {
+    final audio = GameAudio.instance;
+    switch (event) {
+      case GameEvent.flap:
+        unawaited(audio.play(Sfx.flap));
+      case GameEvent.score:
+        unawaited(audio.play(Sfx.score));
+      case GameEvent.hit:
+        unawaited(audio.play(Sfx.hit));
+        unawaited(HapticFeedback.heavyImpact()); // short vibration on death
+      case GameEvent.gameOver:
+        unawaited(audio.play(Sfx.gameOver));
+    }
+  }
+
+  // ------------------------------------------------------------------ UI
 
   @override
   Widget build(BuildContext context) {
@@ -87,6 +117,13 @@ class _GameScreenState extends State<GameScreen>
                   valueListenable: controller.stateNotifier,
                   builder: (context, state, _) => _buildOverlay(state),
                 ),
+              ),
+
+              // Mute toggle (top left)
+              Positioned(
+                top: MediaQuery.of(context).padding.top + 8.h,
+                left: 8.w,
+                child: const MuteButton(),
               ),
 
               // Debug toggle (hitboxes) — remove later

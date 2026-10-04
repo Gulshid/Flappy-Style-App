@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
+import 'game/game_assets.dart';
 import 'screens/menu_screen.dart';
+import 'utils/audio.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -13,6 +15,13 @@ Future<void> main() async {
     DeviceOrientation.portraitDown,
   ]);
   await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+
+  // Phase 7: decode every image ONCE before the first frame (no flicker)
+  await GameAssets.load();
+
+  // Phase 8: preload sounds + load the saved mute setting.
+  // If audio fails, the game simply runs silent.
+  await GameAudio.instance.init();
 
   runApp(const MyApp());
 }
@@ -46,7 +55,7 @@ class MyApp extends StatelessWidget {
                   child: child!,
                 );
               },
-              home: const MenuScreen(), // Phase 6: menu is the first screen
+              home: const MenuScreen(),
             );
           },
         );
