@@ -9,27 +9,30 @@ import '../models/game_state.dart';
 import '../models/pipe.dart';
 import '../utils/constants.dart';
 
-/// Owns all game state and rules. Knows nothing about widgets, painting or
-/// storage. It is a [ChangeNotifier] so the painter can repaint without
-/// rebuilding the widget tree every frame.
+/// Owns all game state and rules. Knows nothing about widgets, painting,
+/// storage or audio. It is a [ChangeNotifier] so the painter can repaint
+/// without rebuilding the widget tree every frame.
 class GameController extends ChangeNotifier {
   /// [rng] can be injected in tests (Phase 10) for predictable pipes.
-  /// [onNewBest] is called when a round ends with a new high score (the
-  /// screen passes Storage.saveBest, so this class stays free of I/O).
-  GameController({Random? rng, this.onNewBest}) : _rng = rng ?? Random();
+  /// [onNewBest] is called when a round ends with a new high score.
+  /// [onEvent] is called for flap / score / hit / gameOver so the screen can
+  /// play sounds and vibrate (Phase 8).
+  GameController({Random? rng, this.onNewBest, this.onEvent})
+      : _rng = rng ?? Random();
 
   final Random _rng;
   final Future<void> Function(int score)? onNewBest;
+  final void Function(GameEvent event)? onEvent;
 
   final Bird bird = Bird();
   final List<Pipe> pipes = [];
 
-  // ---------------------------------------------------- State (Phase 6)
+  // ----------------------------------------------------------------- State
   final ValueNotifier<GameState> stateNotifier =
       ValueNotifier<GameState>(GameState.ready);
   GameState get state => stateNotifier.value;
 
-  // ---------------------------------------------------- Score (Phase 5)
+  // ----------------------------------------------------------------- Score
   final ValueNotifier<int> scoreNotifier = ValueNotifier<int>(0);
   int get score => scoreNotifier.value;
 
@@ -40,6 +43,17 @@ class GameController extends ChangeNotifier {
   void setBestScore(int value) {
     if (value > bestScore) bestScore = value;
   }
+
+  // ------------------------------------------- Visual state (Phase 7)
+  /// How far the world has scrolled, in screen widths. The painter turns
+  /// this into pixel offsets for the ground and the parallax layers.
+  double scroll = 0;
+
+  /// Seconds of animation time (drives the wing flapping). Frozen on death.
+  double animTime = 0;
+
+  /// Screen shake strength: 1.0 right after a crash, fading to 0.
+  double shake = 0;
 
   // ---------------------------------------------------- Layout (pixels)
   Size viewSize = Size.zero;
@@ -52,6 +66,10 @@ class GameController extends ChangeNotifier {
   double _spawnTimer = GameConstants.pipeSpawnInterval; // spawn one right away
   double? _lastGapY;
   double _readyTime = 0;
+  double _deadTime = 0;
+  bool _gameOverEventPending = false;
+
+  void _emit(GameEvent event) => onEvent?.call(event);
 
   // ---------------------------------------------------------------- Layout
 
@@ -88,14 +106,23 @@ class GameController extends ChangeNotifier {
 
     switch (state) {
       case GameState.ready:
+        _advanceWorld(dt);
         _updateReady(dt);
       case GameState.playing:
+        _advanceWorld(dt);
         _updatePlaying(dt);
       case GameState.gameOver:
         _updateDead(dt);
     }
 
     notifyListeners(); // repaint
+  }
+
+  /// Ground, clouds and hills scroll, and the wings flap, while the round is
+  /// alive (ready + playing). Everything freezes on death.
+  void _advanceWorld(double dt) {
+    scroll += GameConstants.pipeSpeed * dt;
+    animTime += dt;
   }
 
   // Ready: no gravity, the bird gently floats up and down.
@@ -114,10 +141,18 @@ class GameController extends ChangeNotifier {
     if (state == GameState.playing) _updateScore(); // no score if we just died
   }
 
-  // Game over: pipes freeze, the bird just falls to the ground.
+  // Game over: pipes freeze, the bird falls, the screen shakes briefly.
   void _updateDead(double dt) {
+    _deadTime += dt;
     bird.update(dt);
     _clampBirdToWorld();
+
+    shake = max(0, shake - dt / GameConstants.shakeDuration);
+
+    if (_gameOverEventPending && _deadTime >= GameConstants.gameOverSoundDelay) {
+      _gameOverEventPending = false;
+      _emit(GameEvent.gameOver);
+    }
   }
 
   void _clampBirdToWorld() {
@@ -179,6 +214,7 @@ class GameController extends ChangeNotifier {
       if (!p.passed && p.x < GameConstants.birdX) {
         p.passed = true;
         scoreNotifier.value = scoreNotifier.value + 1;
+        _emit(GameEvent.score);
       }
     }
   }
@@ -221,7 +257,7 @@ class GameController extends ChangeNotifier {
   void _die() {
     _clampBirdToWorld();
 
-    // High score (Phase 5)
+    // High score
     if (score > bestScore) {
       bestScore = score;
       isNewBest = true;
@@ -229,6 +265,12 @@ class GameController extends ChangeNotifier {
     } else {
       isNewBest = false;
     }
+
+    // Death effects
+    shake = 1.0;
+    _deadTime = 0;
+    _gameOverEventPending = true;
+    _emit(GameEvent.hit);
 
     stateNotifier.value = GameState.gameOver;
   }
@@ -241,6 +283,7 @@ class GameController extends ChangeNotifier {
         _start();
       case GameState.playing:
         bird.flap();
+        _emit(GameEvent.flap);
       case GameState.gameOver:
         break; // use the Restart button
     }
@@ -249,6 +292,7 @@ class GameController extends ChangeNotifier {
   void _start() {
     _spawnTimer = GameConstants.pipeSpawnInterval;
     bird.flap();
+    _emit(GameEvent.flap);
     stateNotifier.value = GameState.playing;
   }
 
@@ -264,6 +308,9 @@ class GameController extends ChangeNotifier {
     _spawnTimer = GameConstants.pipeSpawnInterval;
     _lastGapY = null;
     _readyTime = 0;
+    _deadTime = 0;
+    _gameOverEventPending = false;
+    shake = 0;
     isNewBest = false;
     scoreNotifier.value = 0;
     stateNotifier.value = GameState.ready;

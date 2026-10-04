@@ -31,10 +31,36 @@ class GameConstants {
   static const double pipeGapSize = 0.28; // screen heights
   static const double pipeGapMargin = 0.08; // min space gap <-> ceiling/ground
   static const double pipeMaxGapShift = 0.25; // max change vs previous gap
-  static const double pipeCapHeight = 0.03; // visual lip, screen heights
+  static const double pipeCapHeight = 0.03; // pipe cap, screen heights
 
   // -------------------------------------------------------------- Collision
   static const bool ceilingKills = true; // false = bird just stops at the top
+
+  // ------------------------------------------------------- Visuals (Phase 7)
+  /// Bird sprite width as a multiple of the bird radius (sprite is 80x64).
+  static const double birdSpriteWidthFactor = 2.3;
+
+  /// Wing animation: frames per second, and the frame order (0=up,1=mid,2=down).
+  static const double wingFps = 10;
+  static const List<int> wingSequence = [0, 1, 2, 1];
+
+  /// Parallax: how fast each layer scrolls compared to the pipes/ground (1.0).
+  static const double cloudsParallax = 0.08;
+  static const double hillsParallax = 0.25;
+  static const double groundParallax = 1.0;
+
+  /// Layer placement, in screen heights.
+  static const double cloudsTop = 0.04;
+  static const double cloudsHeight = 0.30;
+  static const double hillsHeight = 0.18; // sits right above the ground
+
+  /// Screen shake on death.
+  static const double shakeDuration = 0.35; // seconds
+  static const double shakeMagnitude = 0.012; // fraction of screen width
+
+  // -------------------------------------------------------- Feedback (Phase 8)
+  /// Delay between the crash ("hit") and the "game over" jingle.
+  static const double gameOverSoundDelay = 0.45; // seconds
 
   // ------------------------------------------------------------------- Loop
   // Never simulate a huge step (e.g. after a hiccup)

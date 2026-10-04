@@ -2,11 +2,13 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Saves and loads small values on the device.
-/// Phase 8 will reuse this for the mute setting.
 class Storage {
   Storage._();
 
   static const String _bestKey = 'best';
+  static const String _mutedKey = 'muted';
+
+  // ------------------------------------------------------------ High score
 
   static Future<int> loadBest() async {
     try {
@@ -26,6 +28,27 @@ class Storage {
       if (score > best) await prefs.setInt(_bestKey, score);
     } catch (e) {
       debugPrint('[Storage] saveBest failed: $e');
+    }
+  }
+
+  // ------------------------------------------------------------------ Mute
+
+  static Future<bool> loadMuted() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getBool(_mutedKey) ?? false;
+    } catch (e) {
+      debugPrint('[Storage] loadMuted failed: $e');
+      return false;
+    }
+  }
+
+  static Future<void> saveMuted(bool muted) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_mutedKey, muted);
+    } catch (e) {
+      debugPrint('[Storage] saveMuted failed: $e');
     }
   }
 }
