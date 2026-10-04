@@ -14,6 +14,10 @@ class Pipe {
   final double gapCenterY;
   final double gapSize;
 
+  /// Phase 5: set to true once the bird has passed this pipe, so the score
+  /// is only counted once per pipe.
+  bool passed = false;
+
   Pipe({
     required this.x,
     required this.gapCenterY,
