@@ -4,7 +4,12 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 import '../game/game_controller.dart';
 import '../game/game_painter.dart';
+import '../models/game_state.dart';
 import '../utils/constants.dart';
+import '../utils/storage.dart';
+import '../widgets/game_over_panel.dart';
+import '../widgets/game_text.dart';
+import '../widgets/score_display.dart';
 
 class GameScreen extends StatefulWidget {
   const GameScreen({super.key});
@@ -15,7 +20,10 @@ class GameScreen extends StatefulWidget {
 
 class _GameScreenState extends State<GameScreen>
     with SingleTickerProviderStateMixin {
-  final GameController controller = GameController();
+  // The controller saves a new best score through Storage, but never
+  // touches shared_preferences itself (keeps the logic easy to test).
+  final GameController controller = GameController(onNewBest: Storage.saveBest);
+
   late final Ticker _ticker;
   late final GamePainter _painter;
   Duration _last = Duration.zero;
@@ -24,6 +32,11 @@ class _GameScreenState extends State<GameScreen>
   void initState() {
     super.initState();
     _painter = GamePainter(controller);
+
+    // Load the saved high score at startup
+    Storage.loadBest().then((best) {
+      if (mounted) controller.setBestScore(best);
+    });
 
     _ticker = createTicker((elapsed) {
       // Delta time in seconds -> frame-rate independent movement
@@ -54,75 +67,84 @@ class _GameScreenState extends State<GameScreen>
             GameConstants.pipeWidthDesign.w,
           );
 
-          return GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTapDown: (_) => controller.onTap(), // lower lag than onTap
-            child: Stack(
-              children: [
-                Positioned.fill(
+          return Stack(
+            children: [
+              // Game canvas + tap input (only the canvas listens for taps,
+              // so the overlay buttons are never affected by it)
+              Positioned.fill(
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTapDown: (_) => controller.onTap(), // lower lag than onTap
                   child: RepaintBoundary(
                     child: CustomPaint(painter: _painter),
                   ),
                 ),
+              ),
 
-                // TEMPORARY game-over text (Phase 6 replaces this with a
-                // real Game Over panel + Restart button)
-                Positioned.fill(
-                  child: IgnorePointer(
-                    child: ValueListenableBuilder<bool>(
-                      valueListenable: controller.gameOverNotifier,
-                      builder: (context, isOver, _) {
-                        if (!isOver) return const SizedBox.shrink();
-                        return Center(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                'Game Over',
-                                style: TextStyle(
-                                  fontSize: 40.sp,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.white,
-                                  decoration: TextDecoration.none,
-                                  shadows: const [
-                                    Shadow(blurRadius: 6, color: Colors.black54),
-                                  ],
-                                ),
-                              ),
-                              SizedBox(height: 8.h),
-                              Text(
-                                'Tap to restart',
-                                style: TextStyle(
-                                  fontSize: 18.sp,
-                                  color: Colors.white,
-                                  decoration: TextDecoration.none,
-                                  shadows: const [
-                                    Shadow(blurRadius: 6, color: Colors.black54),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                        );
-                      },
-                    ),
-                  ),
+              // Overlay that changes with the game state
+              Positioned.fill(
+                child: ValueListenableBuilder<GameState>(
+                  valueListenable: controller.stateNotifier,
+                  builder: (context, state, _) => _buildOverlay(state),
                 ),
+              ),
 
-                // Debug toggle (hitboxes) — remove later
-                Positioned(
-                  top: MediaQuery.of(context).padding.top + 8.h,
-                  right: 8.w,
-                  child: IconButton(
-                    icon: const Icon(Icons.bug_report, color: Colors.white),
-                    onPressed: controller.toggleDebug,
-                  ),
+              // Debug toggle (hitboxes) — remove later
+              Positioned(
+                top: MediaQuery.of(context).padding.top + 8.h,
+                right: 8.w,
+                child: IconButton(
+                  icon: const Icon(Icons.bug_report, color: Colors.white),
+                  onPressed: controller.toggleDebug,
                 ),
-              ],
-            ),
+              ),
+            ],
           );
         },
       ),
     );
+  }
+
+  Widget _buildOverlay(GameState state) {
+    switch (state) {
+      case GameState.ready:
+        return const IgnorePointer(
+          child: Align(
+            alignment: Alignment(0, -0.5),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                GameText('Get Ready', fontSize: 36),
+                SizedBox(height: 8),
+                GameText('Tap to start', fontSize: 20),
+              ],
+            ),
+          ),
+        );
+
+      case GameState.playing:
+        return IgnorePointer(
+          child: SafeArea(
+            child: Align(
+              alignment: Alignment.topCenter,
+              child: Padding(
+                padding: EdgeInsets.only(top: 24.h),
+                child: ScoreDisplay(score: controller.scoreNotifier),
+              ),
+            ),
+          ),
+        );
+
+      case GameState.gameOver:
+        return Center(
+          child: GameOverPanel(
+            score: controller.score,
+            best: controller.bestScore,
+            isNewBest: controller.isNewBest,
+            onRestart: controller.reset,
+            onMenu: () => Navigator.of(context).pop(),
+          ),
+        );
+    }
   }
 }
