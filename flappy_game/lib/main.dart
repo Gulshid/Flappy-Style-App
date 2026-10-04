@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
-import 'screens/game_screen.dart';
+import 'screens/menu_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -46,7 +46,7 @@ class MyApp extends StatelessWidget {
                   child: child!,
                 );
               },
-              home: const GameScreen(),
+              home: const MenuScreen(), // Phase 6: menu is the first screen
             );
           },
         );
