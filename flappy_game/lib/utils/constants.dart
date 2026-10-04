@@ -16,11 +16,15 @@ class GameConstants {
   static const double birdRadiusDesign = 18; // design px, scaled with .r
   static const double hitboxShrink = 0.9; // hitbox = 90% of visual size
 
+  // Ready state: the bird bobs up and down while waiting for the first tap
+  static const double readyBobSpeed = 4.0; // radians per second
+  static const double readyBobAmount = 0.015; // screen heights
+
   // ------------------------------------------------------------------ World
   static const double groundHeight = 0.10; // fraction of screen height
   static double get groundTop => 1.0 - groundHeight;
 
-  // ------------------------------------------------------------------ Pipes (Phase 3)
+  // ------------------------------------------------------------------ Pipes
   static const double pipeWidthDesign = 64; // design px, scaled with .w
   static const double pipeSpeed = 0.35; // screen widths per second
   static const double pipeSpawnInterval = 1.7; // seconds between pipes
@@ -29,14 +33,14 @@ class GameConstants {
   static const double pipeMaxGapShift = 0.25; // max change vs previous gap
   static const double pipeCapHeight = 0.03; // visual lip, screen heights
 
-  // -------------------------------------------------------------- Collision (Phase 4)
+  // -------------------------------------------------------------- Collision
   static const bool ceilingKills = true; // false = bird just stops at the top
-  static const double restartDelay = 0.5; // seconds before tap restarts
 
   // ------------------------------------------------------------------- Loop
   // Never simulate a huge step (e.g. after a hiccup)
   static const double maxDt = 0.05;
 
   // ------------------------------------------------------------------ Debug
-  static const bool debugHitboxes = true;
+  // Can still be toggled at runtime with the bug icon.
+  static const bool debugHitboxes = false;
 }

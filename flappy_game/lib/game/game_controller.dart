@@ -1,42 +1,57 @@
+import 'dart:async';
 import 'dart:math';
 import 'dart:ui';
 
 import 'package:flutter/foundation.dart';
 
 import '../models/bird.dart';
+import '../models/game_state.dart';
 import '../models/pipe.dart';
 import '../utils/constants.dart';
 
-/// Owns all game state and rules. Knows nothing about widgets or painting.
-/// It is a [ChangeNotifier] so the painter can repaint without rebuilding
-/// the widget tree every frame.
+/// Owns all game state and rules. Knows nothing about widgets, painting or
+/// storage. It is a [ChangeNotifier] so the painter can repaint without
+/// rebuilding the widget tree every frame.
 class GameController extends ChangeNotifier {
   /// [rng] can be injected in tests (Phase 10) for predictable pipes.
-  GameController({Random? rng}) : _rng = rng ?? Random();
+  /// [onNewBest] is called when a round ends with a new high score (the
+  /// screen passes Storage.saveBest, so this class stays free of I/O).
+  GameController({Random? rng, this.onNewBest}) : _rng = rng ?? Random();
 
   final Random _rng;
+  final Future<void> Function(int score)? onNewBest;
 
   final Bird bird = Bird();
   final List<Pipe> pipes = [];
 
-  /// TEMPORARY (Phase 4): simple game-over flag. Phase 6 replaces this with
-  /// a proper GameState enum (ready / playing / gameOver).
-  final ValueNotifier<bool> gameOverNotifier = ValueNotifier<bool>(false);
-  bool get isGameOver => gameOverNotifier.value;
+  // ---------------------------------------------------- State (Phase 6)
+  final ValueNotifier<GameState> stateNotifier =
+      ValueNotifier<GameState>(GameState.ready);
+  GameState get state => stateNotifier.value;
 
-  // Layout (pixels), set by the screen's LayoutBuilder
+  // ---------------------------------------------------- Score (Phase 5)
+  final ValueNotifier<int> scoreNotifier = ValueNotifier<int>(0);
+  int get score => scoreNotifier.value;
+
+  int bestScore = 0;
+  bool isNewBest = false;
+
+  /// Called after the saved high score has been loaded from storage.
+  void setBestScore(int value) {
+    if (value > bestScore) bestScore = value;
+  }
+
+  // ---------------------------------------------------- Layout (pixels)
   Size viewSize = Size.zero;
   double birdRadiusPx = 0;
   double pipeWidthPx = 0;
 
   bool debug = GameConstants.debugHitboxes;
 
-  // Pipe spawning
+  // ---------------------------------------------------- Internal timers
   double _spawnTimer = GameConstants.pipeSpawnInterval; // spawn one right away
   double? _lastGapY;
-
-  // Time since death (so an accidental tap doesn't restart instantly)
-  double _deadTime = 0;
+  double _readyTime = 0;
 
   // ---------------------------------------------------------------- Layout
 
@@ -71,20 +86,36 @@ class GameController extends ChangeNotifier {
   void update(double dt) {
     if (viewSize.isEmpty) return;
 
-    if (isGameOver) {
-      _updateDead(dt);
-    } else {
-      bird.update(dt);
-      _updatePipes(dt);
-      _checkCollisions();
+    switch (state) {
+      case GameState.ready:
+        _updateReady(dt);
+      case GameState.playing:
+        _updatePlaying(dt);
+      case GameState.gameOver:
+        _updateDead(dt);
     }
 
     notifyListeners(); // repaint
   }
 
-  // After death: pipes freeze, the bird just falls to the ground.
+  // Ready: no gravity, the bird gently floats up and down.
+  void _updateReady(double dt) {
+    _readyTime += dt;
+    bird.velocity = 0;
+    bird.y = GameConstants.birdStartY +
+        sin(_readyTime * GameConstants.readyBobSpeed) *
+            GameConstants.readyBobAmount;
+  }
+
+  void _updatePlaying(double dt) {
+    bird.update(dt);
+    _updatePipes(dt);
+    _checkCollisions();
+    if (state == GameState.playing) _updateScore(); // no score if we just died
+  }
+
+  // Game over: pipes freeze, the bird just falls to the ground.
   void _updateDead(double dt) {
-    _deadTime += dt;
     bird.update(dt);
     _clampBirdToWorld();
   }
@@ -140,6 +171,18 @@ class GameController extends ChangeNotifier {
     ));
   }
 
+  // ----------------------------------------------------------------- Score
+
+  /// +1 when the bird passes a pipe's x position, once per pipe.
+  void _updateScore() {
+    for (final p in pipes) {
+      if (!p.passed && p.x < GameConstants.birdX) {
+        p.passed = true;
+        scoreNotifier.value = scoreNotifier.value + 1;
+      }
+    }
+  }
+
   // ------------------------------------------------------------- Collision
 
   void _checkCollisions() {
@@ -176,19 +219,37 @@ class GameController extends ChangeNotifier {
   }
 
   void _die() {
-    _deadTime = 0;
     _clampBirdToWorld();
-    gameOverNotifier.value = true;
+
+    // High score (Phase 5)
+    if (score > bestScore) {
+      bestScore = score;
+      isNewBest = true;
+      if (onNewBest != null) unawaited(onNewBest!(score));
+    } else {
+      isNewBest = false;
+    }
+
+    stateNotifier.value = GameState.gameOver;
   }
 
   // ----------------------------------------------------------------- Input
 
   void onTap() {
-    if (isGameOver) {
-      if (_deadTime >= GameConstants.restartDelay) reset();
-      return;
+    switch (state) {
+      case GameState.ready:
+        _start();
+      case GameState.playing:
+        bird.flap();
+      case GameState.gameOver:
+        break; // use the Restart button
     }
+  }
+
+  void _start() {
+    _spawnTimer = GameConstants.pipeSpawnInterval;
     bird.flap();
+    stateNotifier.value = GameState.playing;
   }
 
   void toggleDebug() {
@@ -196,19 +257,23 @@ class GameController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Puts EVERYTHING back to the starting state (back to "ready").
   void reset() {
     bird.reset();
     pipes.clear();
     _spawnTimer = GameConstants.pipeSpawnInterval;
     _lastGapY = null;
-    _deadTime = 0;
-    gameOverNotifier.value = false;
+    _readyTime = 0;
+    isNewBest = false;
+    scoreNotifier.value = 0;
+    stateNotifier.value = GameState.ready;
     notifyListeners();
   }
 
   @override
   void dispose() {
-    gameOverNotifier.dispose();
+    stateNotifier.dispose();
+    scoreNotifier.dispose();
     super.dispose();
   }
 }
