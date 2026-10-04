@@ -5,23 +5,27 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'game/game_assets.dart';
 import 'screens/menu_screen.dart';
 import 'utils/audio.dart';
+import 'utils/settings.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Phase 0: portrait only + full-screen play
+  // Portrait only + full-screen play
   await SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,
   ]);
   await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
 
-  // Phase 7: decode every image ONCE before the first frame (no flicker)
+  // Decode every image ONCE before the first frame (no flicker)
   await GameAssets.load();
 
-  // Phase 8: preload sounds + load the saved mute setting.
+  // Preload sounds + load the saved mute setting.
   // If audio fails, the game simply runs silent.
   await GameAudio.instance.init();
+
+  // Phase 9: load difficulty, vibration and "tutorial seen" before any screen
+  await GameSettings.instance.init();
 
   runApp(const MyApp());
 }

@@ -1,6 +1,9 @@
 /// All tunable numbers live here. Vertical values are in "screen heights"
 /// (0.0 = top, 1.0 = bottom) and horizontal values in "screen widths", so
 /// physics behaves the same on every screen.
+///
+/// Pipe SPEED and GAP SIZE now come from the difficulty setting
+/// (see models/difficulty.dart), because they change with the score.
 class GameConstants {
   GameConstants._();
 
@@ -26,9 +29,11 @@ class GameConstants {
 
   // ------------------------------------------------------------------ Pipes
   static const double pipeWidthDesign = 64; // design px, scaled with .w
-  static const double pipeSpeed = 0.35; // screen widths per second
-  static const double pipeSpawnInterval = 1.7; // seconds between pipes
-  static const double pipeGapSize = 0.28; // screen heights
+
+  /// Distance between two pipes in screen widths. Spawning is by DISTANCE
+  /// (not time), so the spacing stays the same even when the pipes speed up.
+  static const double pipeSpacing = 0.6;
+
   static const double pipeGapMargin = 0.08; // min space gap <-> ceiling/ground
   static const double pipeMaxGapShift = 0.25; // max change vs previous gap
   static const double pipeCapHeight = 0.03; // pipe cap, screen heights
@@ -36,7 +41,7 @@ class GameConstants {
   // -------------------------------------------------------------- Collision
   static const bool ceilingKills = true; // false = bird just stops at the top
 
-  // ------------------------------------------------------- Visuals (Phase 7)
+  // ------------------------------------------------------------- Visuals
   /// Bird sprite width as a multiple of the bird radius (sprite is 80x64).
   static const double birdSpriteWidthFactor = 2.3;
 
@@ -58,12 +63,21 @@ class GameConstants {
   static const double shakeDuration = 0.35; // seconds
   static const double shakeMagnitude = 0.012; // fraction of screen width
 
-  // -------------------------------------------------------- Feedback (Phase 8)
+  // --------------------------------------------------------------- Feedback
   /// Delay between the crash ("hit") and the "game over" jingle.
   static const double gameOverSoundDelay = 0.45; // seconds
 
+  // ------------------------------------------------- Polish (Phase 9)
+  /// After pressing Resume, a 3-2-1 countdown runs before play continues.
+  static const int resumeCountdown = 3; // seconds
+
+  /// The play area is never wider than height * this value. On phones and
+  /// portrait tablets it has no effect; on wide screens (foldables, desktop,
+  /// landscape) the game stays centred instead of stretching.
+  static const double maxPlayAspect = 0.75; // width / height
+
   // ------------------------------------------------------------------- Loop
-  // Never simulate a huge step (e.g. after a hiccup)
+  // Never simulate a huge step (e.g. after a hiccup or coming back from pause)
   static const double maxDt = 0.05;
 
   // ------------------------------------------------------------------ Debug

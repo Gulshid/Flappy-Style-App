@@ -3,10 +3,13 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
+import '../models/difficulty.dart';
+import '../utils/settings.dart';
 import '../utils/storage.dart';
 import '../widgets/game_text.dart';
 import '../widgets/mute_button.dart';
 import 'game_screen.dart';
+import 'settings_screen.dart';
 
 class MenuScreen extends StatefulWidget {
   const MenuScreen({super.key});
@@ -35,6 +38,12 @@ class _MenuScreenState extends State<MenuScreen> {
     );
     // Back from the game: refresh the best score
     _loadBest();
+  }
+
+  void _openSettings() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => const SettingsScreen()),
+    );
   }
 
   @override
@@ -70,7 +79,14 @@ class _MenuScreenState extends State<MenuScreen> {
                             const GameText('Flappy Game', fontSize: 40),
                             SizedBox(height: 8.h),
                             GameText('Best: $_best', fontSize: 20),
-                            SizedBox(height: 40.h),
+                            SizedBox(height: 4.h),
+                            // Updates by itself when changed in Settings
+                            ValueListenableBuilder<Difficulty>(
+                              valueListenable: GameSettings.instance.difficulty,
+                              builder: (context, d, _) =>
+                                  GameText(d.label, fontSize: 16),
+                            ),
+                            SizedBox(height: 36.h),
                             SizedBox(
                               width: buttonWidth,
                               height: 52.h,
@@ -84,10 +100,10 @@ class _MenuScreenState extends State<MenuScreen> {
                             SizedBox(
                               width: buttonWidth,
                               height: 44.h,
-                              child: const OutlinedButton(
-                                onPressed:
-                                    null, // Settings screen comes in Phase 9
-                                child: Text('Settings (soon)'),
+                              child: OutlinedButton(
+                                onPressed: _openSettings,
+                                child: Text('Settings',
+                                    style: TextStyle(fontSize: 18.sp)),
                               ),
                             ),
                           ],

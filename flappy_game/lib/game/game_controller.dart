@@ -5,6 +5,7 @@ import 'dart:ui';
 import 'package:flutter/foundation.dart';
 
 import '../models/bird.dart';
+import '../models/difficulty.dart';
 import '../models/game_state.dart';
 import '../models/pipe.dart';
 import '../utils/constants.dart';
@@ -13,13 +14,19 @@ import '../utils/constants.dart';
 /// storage or audio. It is a [ChangeNotifier] so the painter can repaint
 /// without rebuilding the widget tree every frame.
 class GameController extends ChangeNotifier {
+  /// [difficulty] decides the pipe speed and gap size curve.
   /// [rng] can be injected in tests (Phase 10) for predictable pipes.
   /// [onNewBest] is called when a round ends with a new high score.
   /// [onEvent] is called for flap / score / hit / gameOver so the screen can
-  /// play sounds and vibrate (Phase 8).
-  GameController({Random? rng, this.onNewBest, this.onEvent})
-      : _rng = rng ?? Random();
+  /// play sounds and vibrate.
+  GameController({
+    this.difficulty = Difficulty.normal,
+    Random? rng,
+    this.onNewBest,
+    this.onEvent,
+  }) : _rng = rng ?? Random();
 
+  final Difficulty difficulty;
   final Random _rng;
   final Future<void> Function(int score)? onNewBest;
   final void Function(GameEvent event)? onEvent;
@@ -44,7 +51,23 @@ class GameController extends ChangeNotifier {
     if (value > bestScore) bestScore = value;
   }
 
-  // ------------------------------------------- Visual state (Phase 7)
+  // ------------------------------------------------- Difficulty (Phase 9)
+  /// Current pipe speed (screen widths / second): grows with the score.
+  double get pipeSpeed => difficulty.pipeSpeed(score);
+
+  /// Current gap size (screen heights): shrinks with the score.
+  double get gapSize => difficulty.gapSize(score);
+
+  // ------------------------------------------------------ Pause (Phase 9)
+  /// True while the pause menu is open.
+  final ValueNotifier<bool> pausedNotifier = ValueNotifier<bool>(false);
+  bool get isPaused => pausedNotifier.value;
+
+  /// 3, 2, 1 after pressing Resume; 0 when there is no countdown.
+  final ValueNotifier<int> countdownNotifier = ValueNotifier<int>(0);
+  double _countdown = 0;
+
+  // -------------------------------------------------------- Visual state
   /// How far the world has scrolled, in screen widths. The painter turns
   /// this into pixel offsets for the ground and the parallax layers.
   double scroll = 0;
@@ -63,7 +86,9 @@ class GameController extends ChangeNotifier {
   bool debug = GameConstants.debugHitboxes;
 
   // ---------------------------------------------------- Internal timers
-  double _spawnTimer = GameConstants.pipeSpawnInterval; // spawn one right away
+  // Distance (screen widths) travelled since the last pipe spawned.
+  // Starts "full" so the first pipe appears right after the first tap.
+  double _spawnDistance = GameConstants.pipeSpacing;
   double? _lastGapY;
   double _readyTime = 0;
   double _deadTime = 0;
@@ -104,6 +129,16 @@ class GameController extends ChangeNotifier {
   void update(double dt) {
     if (viewSize.isEmpty) return;
 
+    // Pause: freeze everything. The ticker keeps handing us small dt values,
+    // so nothing jumps when we resume.
+    if (isPaused) return;
+
+    // After Resume: count 3-2-1 with the world frozen, then continue.
+    if (_countdown > 0) {
+      _tickCountdown(dt);
+      return;
+    }
+
     switch (state) {
       case GameState.ready:
         _advanceWorld(dt);
@@ -121,7 +156,7 @@ class GameController extends ChangeNotifier {
   /// Ground, clouds and hills scroll, and the wings flap, while the round is
   /// alive (ready + playing). Everything freezes on death.
   void _advanceWorld(double dt) {
-    scroll += GameConstants.pipeSpeed * dt;
+    scroll += pipeSpeed * dt;
     animTime += dt;
   }
 
@@ -165,13 +200,15 @@ class GameController extends ChangeNotifier {
   // ----------------------------------------------------------------- Pipes
 
   void _updatePipes(double dt) {
-    _spawnTimer += dt;
-    if (_spawnTimer >= GameConstants.pipeSpawnInterval) {
-      _spawnTimer -= GameConstants.pipeSpawnInterval;
+    final dx = pipeSpeed * dt;
+
+    // Spawn by DISTANCE travelled, so spacing stays constant as speed grows.
+    _spawnDistance += dx;
+    if (_spawnDistance >= GameConstants.pipeSpacing) {
+      _spawnDistance -= GameConstants.pipeSpacing;
       _spawnPipe();
     }
 
-    final dx = GameConstants.pipeSpeed * dt;
     for (final p in pipes) {
       p.x -= dx;
     }
@@ -182,7 +219,7 @@ class GameController extends ChangeNotifier {
   }
 
   void _spawnPipe() {
-    const gap = GameConstants.pipeGapSize;
+    final gap = gapSize; // current gap (shrinks with the score)
     const margin = GameConstants.pipeGapMargin;
 
     // Gap centre limits so the gap never touches ceiling/ground margins
@@ -275,9 +312,40 @@ class GameController extends ChangeNotifier {
     stateNotifier.value = GameState.gameOver;
   }
 
+  // ----------------------------------------------------------------- Pause
+
+  /// Pauses a running round. Does nothing in any other state, so it is safe
+  /// to call from anywhere (pause button, app going to the background...).
+  void pause() {
+    if (state != GameState.playing || isPaused) return;
+    _countdown = 0; // cancels a running resume countdown
+    countdownNotifier.value = 0;
+    pausedNotifier.value = true;
+  }
+
+  /// Closes the pause menu and starts the 3-2-1 countdown.
+  void resume() {
+    if (!isPaused) return;
+    pausedNotifier.value = false;
+    _countdown = GameConstants.resumeCountdown.toDouble();
+    countdownNotifier.value = GameConstants.resumeCountdown;
+  }
+
+  void _tickCountdown(double dt) {
+    _countdown -= dt;
+    if (_countdown <= 0) {
+      _countdown = 0;
+      countdownNotifier.value = 0;
+    } else {
+      countdownNotifier.value = _countdown.ceil();
+    }
+  }
+
   // ----------------------------------------------------------------- Input
 
   void onTap() {
+    if (isPaused || _countdown > 0) return; // ignore taps while frozen
+
     switch (state) {
       case GameState.ready:
         _start();
@@ -290,7 +358,7 @@ class GameController extends ChangeNotifier {
   }
 
   void _start() {
-    _spawnTimer = GameConstants.pipeSpawnInterval;
+    _spawnDistance = GameConstants.pipeSpacing;
     bird.flap();
     _emit(GameEvent.flap);
     stateNotifier.value = GameState.playing;
@@ -305,11 +373,14 @@ class GameController extends ChangeNotifier {
   void reset() {
     bird.reset();
     pipes.clear();
-    _spawnTimer = GameConstants.pipeSpawnInterval;
+    _spawnDistance = GameConstants.pipeSpacing;
     _lastGapY = null;
     _readyTime = 0;
     _deadTime = 0;
     _gameOverEventPending = false;
+    _countdown = 0;
+    countdownNotifier.value = 0;
+    pausedNotifier.value = false;
     shake = 0;
     isNewBest = false;
     scoreNotifier.value = 0;
@@ -321,6 +392,8 @@ class GameController extends ChangeNotifier {
   void dispose() {
     stateNotifier.dispose();
     scoreNotifier.dispose();
+    pausedNotifier.dispose();
+    countdownNotifier.dispose();
     super.dispose();
   }
 }
