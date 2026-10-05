@@ -6,6 +6,8 @@ import 'game/game_assets.dart';
 import 'screens/menu_screen.dart';
 import 'utils/audio.dart';
 import 'utils/settings.dart';
+import 'utils/stats.dart';
+import 'utils/theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -20,12 +22,15 @@ Future<void> main() async {
   // Decode every image ONCE before the first frame (no flicker)
   await GameAssets.load();
 
-  // Preload sounds + load the saved mute setting.
+  // Preload sounds + load the saved mute and volume settings.
   // If audio fails, the game simply runs silent.
   await GameAudio.instance.init();
 
-  // Phase 9: load difficulty, vibration and "tutorial seen" before any screen
+  // Load difficulty, bird colour, vibration, sky and "tutorial seen"
   await GameSettings.instance.init();
+
+  // Load best scores per difficulty and lifetime statistics
+  await PlayerStats.instance.init();
 
   runApp(const MyApp());
 }
@@ -35,8 +40,8 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Same pattern as FitTrack: LayoutBuilder picks the design size,
-    // ScreenUtilInit scales everything from it.
+    // LayoutBuilder picks the design size, ScreenUtilInit scales everything
+    // from it.
     return LayoutBuilder(
       builder: (context, constraints) {
         return ScreenUtilInit(
@@ -47,10 +52,7 @@ class MyApp extends StatelessWidget {
             return MaterialApp(
               title: 'Flappy Game',
               debugShowCheckedModeBanner: false,
-              theme: ThemeData(
-                useMaterial3: true,
-                colorSchemeSeed: Colors.lightBlue,
-              ),
+              theme: AppTheme.data,
               builder: (context, child) {
                 return MediaQuery(
                   data: MediaQuery.of(context).copyWith(

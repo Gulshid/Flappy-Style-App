@@ -76,6 +76,19 @@ class GameConstants {
   /// landscape) the game stays centred instead of stretching.
   static const double maxPlayAspect = 0.75; // width / height
 
+  // ------------------------------------------- Sky + effects (Phase 11)
+  /// The sky moves to the next stage (day, sunset, night, dawn) every N points.
+  static const int skyStageLength = 10;
+
+  /// How quickly the sky blends to the next stage (higher = faster).
+  static const double skySmoothing = 1.6;
+
+  /// Upper limit for live particles, so effects can never slow the game down.
+  static const int maxParticles = 140;
+
+  /// White flash on impact (0 = off, 1 = full white).
+  static const double flashStrength = 0.5;
+
   // ------------------------------------------------------------------- Loop
   // Never simulate a huge step (e.g. after a hiccup or coming back from pause)
   static const double maxDt = 0.05;

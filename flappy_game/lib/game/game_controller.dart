@@ -9,30 +9,40 @@ import '../models/difficulty.dart';
 import '../models/game_state.dart';
 import '../models/pipe.dart';
 import '../utils/constants.dart';
+import 'particles.dart';
+import 'sky_palette.dart';
 
 /// Owns all game state and rules. Knows nothing about widgets, painting,
 /// storage or audio. It is a [ChangeNotifier] so the painter can repaint
 /// without rebuilding the widget tree every frame.
 class GameController extends ChangeNotifier {
   /// [difficulty] decides the pipe speed and gap size curve.
-  /// [rng] can be injected in tests (Phase 10) for predictable pipes.
+  /// [dynamicSky] lets the sky change (day, sunset, night, dawn) with the score.
+  /// [rng] can be injected in tests for predictable pipes.
   /// [onNewBest] is called when a round ends with a new high score.
+  /// [onRoundEnd] is called at the end of EVERY round (for statistics).
   /// [onEvent] is called for flap / score / hit / gameOver so the screen can
   /// play sounds and vibrate.
   GameController({
     this.difficulty = Difficulty.normal,
+    this.dynamicSky = true,
     Random? rng,
     this.onNewBest,
+    this.onRoundEnd,
     this.onEvent,
-  }) : _rng = rng ?? Random();
+  })  : _rng = rng ?? Random(),
+        particles = ParticleSystem(rng);
 
   final Difficulty difficulty;
+  final bool dynamicSky;
   final Random _rng;
   final Future<void> Function(int score)? onNewBest;
+  final void Function(int score)? onRoundEnd;
   final void Function(GameEvent event)? onEvent;
 
   final Bird bird = Bird();
   final List<Pipe> pipes = [];
+  final ParticleSystem particles;
 
   // ----------------------------------------------------------------- State
   final ValueNotifier<GameState> stateNotifier =
@@ -46,19 +56,19 @@ class GameController extends ChangeNotifier {
   int bestScore = 0;
   bool isNewBest = false;
 
-  /// Called after the saved high score has been loaded from storage.
+  /// Called after the saved high score has been loaded.
   void setBestScore(int value) {
     if (value > bestScore) bestScore = value;
   }
 
-  // ------------------------------------------------- Difficulty (Phase 9)
+  // ------------------------------------------------------------ Difficulty
   /// Current pipe speed (screen widths / second): grows with the score.
   double get pipeSpeed => difficulty.pipeSpeed(score);
 
   /// Current gap size (screen heights): shrinks with the score.
   double get gapSize => difficulty.gapSize(score);
 
-  // ------------------------------------------------------ Pause (Phase 9)
+  // ----------------------------------------------------------------- Pause
   /// True while the pause menu is open.
   final ValueNotifier<bool> pausedNotifier = ValueNotifier<bool>(false);
   bool get isPaused => pausedNotifier.value;
@@ -68,15 +78,17 @@ class GameController extends ChangeNotifier {
   double _countdown = 0;
 
   // -------------------------------------------------------- Visual state
-  /// How far the world has scrolled, in screen widths. The painter turns
-  /// this into pixel offsets for the ground and the parallax layers.
+  /// How far the world has scrolled, in screen widths.
   double scroll = 0;
 
-  /// Seconds of animation time (drives the wing flapping). Frozen on death.
+  /// Seconds of animation time (drives wing flapping and star twinkle).
   double animTime = 0;
 
   /// Screen shake strength: 1.0 right after a crash, fading to 0.
   double shake = 0;
+
+  /// The sky right now (blends towards the palette for the current score).
+  SkyPalette sky = SkyPalette.day;
 
   // ---------------------------------------------------- Layout (pixels)
   Size viewSize = Size.zero;
@@ -86,8 +98,6 @@ class GameController extends ChangeNotifier {
   bool debug = GameConstants.debugHitboxes;
 
   // ---------------------------------------------------- Internal timers
-  // Distance (screen widths) travelled since the last pipe spawned.
-  // Starts "full" so the first pipe appears right after the first tap.
   double _spawnDistance = GameConstants.pipeSpacing;
   double? _lastGapY;
   double _readyTime = 0;
@@ -99,7 +109,6 @@ class GameController extends ChangeNotifier {
   // ---------------------------------------------------------------- Layout
 
   /// Called by the screen's LayoutBuilder whenever the layout changes.
-  /// [birdRadiusPx] and [pipeWidthPx] are already scaled with ScreenUtil.
   void updateLayout(Size size, double birdRadiusPx, double pipeWidthPx) {
     viewSize = size;
     this.birdRadiusPx = birdRadiusPx;
@@ -114,14 +123,17 @@ class GameController extends ChangeNotifier {
 
   // ---------------------------------------------------------------- Hitbox
 
+  /// Bird centre in pixels.
+  Offset get birdCenter => Offset(
+        viewSize.width * GameConstants.birdX,
+        bird.y * viewSize.height,
+      );
+
   /// Bird hitbox in pixel space, slightly smaller than the drawn bird.
   Rect get birdRect {
     final half = birdRadiusPx * GameConstants.hitboxShrink;
-    final center = Offset(
-      viewSize.width * GameConstants.birdX,
-      bird.y * viewSize.height,
-    );
-    return Rect.fromCenter(center: center, width: half * 2, height: half * 2);
+    return Rect.fromCenter(
+        center: birdCenter, width: half * 2, height: half * 2);
   }
 
   // ---------------------------------------------------------------- Update
@@ -129,8 +141,7 @@ class GameController extends ChangeNotifier {
   void update(double dt) {
     if (viewSize.isEmpty) return;
 
-    // Pause: freeze everything. The ticker keeps handing us small dt values,
-    // so nothing jumps when we resume.
+    // Pause: freeze everything.
     if (isPaused) return;
 
     // After Resume: count 3-2-1 with the world frozen, then continue.
@@ -139,6 +150,7 @@ class GameController extends ChangeNotifier {
       return;
     }
 
+    var needsRepaint = true;
     switch (state) {
       case GameState.ready:
         _advanceWorld(dt);
@@ -147,17 +159,25 @@ class GameController extends ChangeNotifier {
         _advanceWorld(dt);
         _updatePlaying(dt);
       case GameState.gameOver:
-        _updateDead(dt);
+        needsRepaint = _updateDead(dt);
     }
 
-    notifyListeners(); // repaint
+    if (needsRepaint) notifyListeners(); // repaint
   }
 
-  /// Ground, clouds and hills scroll, and the wings flap, while the round is
-  /// alive (ready + playing). Everything freezes on death.
+  /// Ground, clouds and hills scroll, the wings flap, the sky blends and
+  /// particles move, while the round is alive (ready + playing).
   void _advanceWorld(double dt) {
     scroll += pipeSpeed * dt;
     animTime += dt;
+    _updateSky(dt);
+    particles.update(dt);
+  }
+
+  void _updateSky(double dt) {
+    final target = dynamicSky ? SkyPalette.forScore(score) : SkyPalette.day;
+    final k = 1 - exp(-GameConstants.skySmoothing * dt);
+    sky = SkyPalette.lerp(sky, target, k);
   }
 
   // Ready: no gravity, the bird gently floats up and down.
@@ -176,18 +196,29 @@ class GameController extends ChangeNotifier {
     if (state == GameState.playing) _updateScore(); // no score if we just died
   }
 
-  // Game over: pipes freeze, the bird falls, the screen shakes briefly.
-  void _updateDead(double dt) {
+  /// Game over: pipes freeze, the bird falls, the screen shakes briefly and
+  /// feathers fly. Returns false once everything has settled, so the painter
+  /// stops redrawing an unchanged picture.
+  bool _updateDead(double dt) {
     _deadTime += dt;
+
+    final beforeY = bird.y;
     bird.update(dt);
     _clampBirdToWorld();
+    particles.update(dt);
 
+    final hadShake = shake > 0;
     shake = max(0, shake - dt / GameConstants.shakeDuration);
 
     if (_gameOverEventPending && _deadTime >= GameConstants.gameOverSoundDelay) {
       _gameOverEventPending = false;
       _emit(GameEvent.gameOver);
     }
+
+    return _gameOverEventPending ||
+        hadShake ||
+        !particles.isEmpty ||
+        (bird.y - beforeY).abs() > 1e-6;
   }
 
   void _clampBirdToWorld() {
@@ -222,7 +253,6 @@ class GameController extends ChangeNotifier {
     final gap = gapSize; // current gap (shrinks with the score)
     const margin = GameConstants.pipeGapMargin;
 
-    // Gap centre limits so the gap never touches ceiling/ground margins
     var minY = margin + gap / 2;
     var maxY = GameConstants.groundTop - margin - gap / 2;
 
@@ -251,6 +281,7 @@ class GameController extends ChangeNotifier {
       if (!p.passed && p.x < GameConstants.birdX) {
         p.passed = true;
         scoreNotifier.value = scoreNotifier.value + 1;
+        particles.sparkle(birdCenter, viewSize.height);
         _emit(GameEvent.score);
       }
     }
@@ -302,11 +333,13 @@ class GameController extends ChangeNotifier {
     } else {
       isNewBest = false;
     }
+    onRoundEnd?.call(score);
 
     // Death effects
     shake = 1.0;
     _deadTime = 0;
     _gameOverEventPending = true;
+    particles.burst(birdCenter, viewSize.height);
     _emit(GameEvent.hit);
 
     stateNotifier.value = GameState.gameOver;
@@ -350,17 +383,21 @@ class GameController extends ChangeNotifier {
       case GameState.ready:
         _start();
       case GameState.playing:
-        bird.flap();
-        _emit(GameEvent.flap);
+        _flap();
       case GameState.gameOver:
         break; // use the Restart button
     }
   }
 
+  void _flap() {
+    bird.flap();
+    particles.puff(birdCenter, viewSize.height);
+    _emit(GameEvent.flap);
+  }
+
   void _start() {
     _spawnDistance = GameConstants.pipeSpacing;
-    bird.flap();
-    _emit(GameEvent.flap);
+    _flap();
     stateNotifier.value = GameState.playing;
   }
 
@@ -373,6 +410,7 @@ class GameController extends ChangeNotifier {
   void reset() {
     bird.reset();
     pipes.clear();
+    particles.clear();
     _spawnDistance = GameConstants.pipeSpacing;
     _lastGapY = null;
     _readyTime = 0;
