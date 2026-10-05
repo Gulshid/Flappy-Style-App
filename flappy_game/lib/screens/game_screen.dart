@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math';
+import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
@@ -9,15 +10,20 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import '../game/game_assets.dart';
 import '../game/game_controller.dart';
 import '../game/game_painter.dart';
+import '../models/difficulty.dart';
 import '../models/game_state.dart';
 import '../utils/audio.dart';
 import '../utils/constants.dart';
 import '../utils/settings.dart';
-import '../utils/storage.dart';
+import '../utils/stats.dart';
+import '../utils/theme.dart';
 import '../widgets/game_over_panel.dart';
 import '../widgets/game_text.dart';
+import '../widgets/glass_card.dart';
+import '../widgets/glass_icon_button.dart';
 import '../widgets/mute_button.dart';
 import '../widgets/pause_panel.dart';
+import '../widgets/reveal.dart';
 import '../widgets/score_display.dart';
 
 class GameScreen extends StatefulWidget {
@@ -29,12 +35,17 @@ class GameScreen extends StatefulWidget {
 
 class _GameScreenState extends State<GameScreen>
     with SingleTickerProviderStateMixin, WidgetsBindingObserver {
-  // The controller only ANNOUNCES things (new best, flap, crash...). This
+  // The difficulty is fixed for the whole screen's life (it can only be
+  // changed from the menu / settings).
+  final _difficulty = GameSettings.instance.difficulty.value;
+
+  // The controller only ANNOUNCES things (round ended, flap, crash...). This
   // screen decides what to do about them, so the game logic stays free of
   // storage / audio code and is easy to test.
   late final GameController controller = GameController(
-    difficulty: GameSettings.instance.difficulty.value,
-    onNewBest: Storage.saveBest,
+    difficulty: _difficulty,
+    dynamicSky: GameSettings.instance.dynamicSky.value,
+    onRoundEnd: _onRoundEnd,
     onEvent: _handleEvent,
   );
 
@@ -45,13 +56,17 @@ class _GameScreenState extends State<GameScreen>
   @override
   void initState() {
     super.initState();
-    // Images were preloaded in main(), so there is no loading flicker
-    _painter = GamePainter(controller, GameAssets.instance);
 
-    // Load the saved high score at startup
-    Storage.loadBest().then((best) {
-      if (mounted) controller.setBestScore(best);
-    });
+    // Images were preloaded in main(), so there is no loading flicker
+    _painter = GamePainter(
+      controller,
+      GameAssets.instance,
+      skin: GameSettings.instance.skin.value,
+    );
+
+    // The best score for this difficulty is already in memory
+    controller.setBestScore(PlayerStats.instance.bestFor(_difficulty));
+    controller.debug = GameSettings.instance.showHitboxes.value;
 
     _ticker = createTicker((elapsed) {
       // Delta time in seconds -> frame-rate independent movement
@@ -103,7 +118,11 @@ class _GameScreenState extends State<GameScreen>
     }
   }
 
-  // ------------------------------------------------------ Sound + haptics
+  // --------------------------------------------------- Stats, sound, haptics
+
+  void _onRoundEnd(int score) {
+    unawaited(PlayerStats.instance.recordRound(score, _difficulty));
+  }
 
   void _handleEvent(GameEvent event) {
     final audio = GameAudio.instance;
@@ -122,12 +141,14 @@ class _GameScreenState extends State<GameScreen>
     }
   }
 
+  void _quitToMenu() => Navigator.of(context).pop();
+
   // ------------------------------------------------------------------ UI
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF4EC0CA), // sky colour beside the game
+      backgroundColor: AppColors.skyTop, // sky colour beside the game
       body: LayoutBuilder(
         builder: (context, constraints) {
           // The play area is never wider than maxPlayAspect * height. On
@@ -185,20 +206,11 @@ class _GameScreenState extends State<GameScreen>
           ),
         ),
 
-        // Mute + debug toggles (top left)
+        // Mute (top left)
         Positioned(
           top: topInset,
-          left: 8.w,
-          child: Row(
-            children: [
-              const MuteButton(),
-              // Debug toggle (hitboxes) — remove later
-              IconButton(
-                icon: const Icon(Icons.bug_report, color: Colors.white),
-                onPressed: controller.toggleDebug,
-              ),
-            ],
-          ),
+          left: 12.w,
+          child: const MuteButton(),
         ),
 
         // 3-2-1 countdown after Resume
@@ -206,25 +218,41 @@ class _GameScreenState extends State<GameScreen>
           child: IgnorePointer(
             child: ValueListenableBuilder<int>(
               valueListenable: controller.countdownNotifier,
-              builder: (context, n, _) => n > 0
-                  ? Center(child: GameText('$n', fontSize: 96))
-                  : const SizedBox.shrink(),
+              builder: (context, n, _) {
+                if (n <= 0) return const SizedBox.shrink();
+                // New key per number -> the pop animation restarts
+                return Center(
+                  child: TweenAnimationBuilder<double>(
+                    key: ValueKey(n),
+                    tween: Tween<double>(begin: 1.6, end: 1.0),
+                    duration: const Duration(milliseconds: 450),
+                    curve: Curves.easeOutBack,
+                    builder: (context, scale, child) =>
+                        Transform.scale(scale: scale, child: child),
+                    child: GameText('$n', fontSize: 110),
+                  ),
+                );
+              },
             ),
           ),
         ),
 
-        // Pause menu (dims the game and blocks taps behind it)
+        // Pause menu (dims + blurs the frozen game, blocks taps behind it)
         Positioned.fill(
           child: ValueListenableBuilder<bool>(
             valueListenable: controller.pausedNotifier,
             builder: (context, paused, _) {
               if (!paused) return const SizedBox.shrink();
-              return Container(
-                color: Colors.black54,
-                alignment: Alignment.center,
-                child: PausePanel(
-                  onResume: controller.resume,
-                  onMenu: () => Navigator.of(context).pop(),
+              return BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 5, sigmaY: 5),
+                child: Container(
+                  color: AppColors.alpha(AppColors.ink, 0.45),
+                  alignment: Alignment.center,
+                  child: PausePanel(
+                    onResume: controller.resume,
+                    onRestart: controller.reset,
+                    onMenu: _quitToMenu,
+                  ),
                 ),
               );
             },
@@ -237,33 +265,7 @@ class _GameScreenState extends State<GameScreen>
   Widget _buildStateOverlay(GameState state, double topInset) {
     switch (state) {
       case GameState.ready:
-        // First launch only: a short hint on how to play
-        final showTutorial = !GameSettings.instance.tutorialSeen;
-        return IgnorePointer(
-          child: Align(
-            alignment: const Alignment(0, -0.5),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const GameText('Get Ready', fontSize: 36),
-                SizedBox(height: 8.h),
-                const GameText('Tap to start', fontSize: 20),
-                if (showTutorial) ...[
-                  SizedBox(height: 24.h),
-                  Icon(
-                    Icons.touch_app,
-                    size: 48.r,
-                    color: Colors.white,
-                    shadows: const [Shadow(blurRadius: 6, color: Colors.black54)],
-                  ),
-                  SizedBox(height: 8.h),
-                  const GameText('Tap to flap.\nFly through the gaps!',
-                      fontSize: 18),
-                ],
-              ],
-            ),
-          ),
-        );
+        return _buildReadyOverlay();
 
       case GameState.playing:
         return Stack(
@@ -273,8 +275,11 @@ class _GameScreenState extends State<GameScreen>
                 child: Align(
                   alignment: Alignment.topCenter,
                   child: Padding(
-                    padding: EdgeInsets.only(top: 24.h),
-                    child: ScoreDisplay(score: controller.scoreNotifier),
+                    padding: EdgeInsets.only(top: 18.h),
+                    child: ScoreDisplay(
+                      score: controller.scoreNotifier,
+                      best: controller.bestScore,
+                    ),
                   ),
                 ),
               ),
@@ -282,15 +287,11 @@ class _GameScreenState extends State<GameScreen>
             // Pause button (top right)
             Positioned(
               top: topInset,
-              right: 8.w,
-              child: IconButton(
+              right: 12.w,
+              child: GlassIconButton(
+                icon: Icons.pause_rounded,
+                tooltip: 'Pause',
                 onPressed: controller.pause,
-                icon: Icon(
-                  Icons.pause_rounded,
-                  color: Colors.white,
-                  size: 32.r,
-                  shadows: const [Shadow(blurRadius: 6, color: Colors.black54)],
-                ),
               ),
             ),
           ],
@@ -302,10 +303,78 @@ class _GameScreenState extends State<GameScreen>
             score: controller.score,
             best: controller.bestScore,
             isNewBest: controller.isNewBest,
+            difficultyLabel: _difficulty.label,
             onRestart: controller.reset,
-            onMenu: () => Navigator.of(context).pop(),
+            onMenu: _quitToMenu,
           ),
         );
     }
   }
+
+  Widget _buildReadyOverlay() {
+    // First launch only: a short card on how to play
+    final showTutorial = !GameSettings.instance.tutorialSeen;
+
+    return IgnorePointer(
+      child: Align(
+        alignment: const Alignment(0, -0.55),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const GameText('Get ready', fontSize: 40),
+            SizedBox(height: 10.h),
+            Pulse(
+              child: Container(
+                padding: EdgeInsets.symmetric(horizontal: 18.w, vertical: 8.h),
+                decoration: BoxDecoration(
+                  color: AppColors.alpha(AppColors.ink, 0.5),
+                  borderRadius: BorderRadius.circular(30.r),
+                  border:
+                      Border.all(color: AppColors.alpha(Colors.white, 0.3)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.touch_app_rounded,
+                        color: Colors.white, size: 22.r),
+                    SizedBox(width: 8.w),
+                    Text('Tap to start',
+                        style: appStyle(16, weight: FontWeight.w800)),
+                  ],
+                ),
+              ),
+            ),
+            if (showTutorial) ...[
+              SizedBox(height: 22.h),
+              GlassCard(
+                blur: 0,
+                radius: 20,
+                padding:
+                    EdgeInsets.symmetric(horizontal: 18.w, vertical: 14.h),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _tip(Icons.touch_app_rounded, 'Tap to flap'),
+                    SizedBox(height: 8.h),
+                    _tip(Icons.swap_vert_rounded, 'Fly through the gaps'),
+                    SizedBox(height: 8.h),
+                    _tip(Icons.warning_amber_rounded, 'Avoid pipes and the ground'),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _tip(IconData icon, String text) => Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: AppColors.amberLight, size: 20.r),
+          SizedBox(width: 10.w),
+          Text(text, style: appStyle(14, weight: FontWeight.w700)),
+        ],
+      );
 }
