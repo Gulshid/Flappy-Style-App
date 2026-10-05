@@ -1,54 +1,72 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
-/// Panel shown over a dimmed game while paused: Resume or go back to the menu.
+import 'app_button.dart';
+import 'game_text.dart';
+import 'glass_card.dart';
+import 'mute_button.dart';
+
+/// Panel shown over a dimmed game while paused.
 class PausePanel extends StatelessWidget {
   const PausePanel({
     super.key,
     required this.onResume,
+    required this.onRestart,
     required this.onMenu,
   });
 
   final VoidCallback onResume;
+  final VoidCallback onRestart;
   final VoidCallback onMenu;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 260.w,
-      padding: EdgeInsets.all(20.r),
-      decoration: BoxDecoration(
-        color: const Color(0xFFFFF8E1),
-        borderRadius: BorderRadius.circular(16.r),
-        border: Border.all(color: const Color(0xFF8D6E63), width: 3),
-        boxShadow: const [
-          BoxShadow(blurRadius: 12, color: Colors.black38, offset: Offset(0, 4)),
-        ],
-      ),
+    return GlassCard(
+      width: 280.w,
+      radius: 28,
+      padding: EdgeInsets.fromLTRB(20.r, 20.r, 20.r, 18.r),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(
-            'Paused',
-            style: TextStyle(
-              fontSize: 28.sp,
-              fontWeight: FontWeight.bold,
-              color: const Color(0xFF5D4037),
-            ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              SizedBox(width: 44.r), // balances the mute button
+              const GameText('Paused', fontSize: 30),
+              const MuteButton(),
+            ],
           ),
-          SizedBox(height: 20.h),
-          SizedBox(
-            width: double.infinity,
-            height: 44.h,
-            child: ElevatedButton(
-              onPressed: onResume,
-              child: Text('Resume', style: TextStyle(fontSize: 18.sp)),
-            ),
+          SizedBox(height: 18.h),
+          AppButton(
+            label: 'Resume',
+            icon: Icons.play_arrow_rounded,
+            onPressed: onResume,
           ),
-          SizedBox(height: 8.h),
-          TextButton(
-            onPressed: onMenu,
-            child: Text('Quit to menu', style: TextStyle(fontSize: 16.sp)),
+          SizedBox(height: 10.h),
+          Row(
+            children: [
+              Expanded(
+                child: AppButton(
+                  label: 'Restart',
+                  icon: Icons.replay_rounded,
+                  style: AppButtonStyle.secondary,
+                  height: 46,
+                  fontSize: 15,
+                  onPressed: onRestart,
+                ),
+              ),
+              SizedBox(width: 10.w),
+              Expanded(
+                child: AppButton(
+                  label: 'Menu',
+                  icon: Icons.home_rounded,
+                  style: AppButtonStyle.secondary,
+                  height: 46,
+                  fontSize: 15,
+                  onPressed: onMenu,
+                ),
+              ),
+            ],
           ),
         ],
       ),
